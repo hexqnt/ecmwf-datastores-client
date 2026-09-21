@@ -42,7 +42,7 @@ Credentials загружаются в порядке, заданном библ�
 
 ## Команды
 
-```console
+```sh
 ecmwf-datastores plan request.toml
 ecmwf-datastores constraints request.toml
 ecmwf-datastores retrieve request.toml --report report.json
@@ -68,7 +68,7 @@ max_concurrent_downloads = 1
 
 Части GRIB объединяются в порядке плана. Переменные NetCDF объединяются по именованным одномерным координатам; конфликтующие пересечения приводят к ошибке. Для сборки на диске должны помещаться все части и итоговый файл. После ошибки части сохраняются и могут быть собраны вручную:
 
-```console
+```sh
 ecmwf-datastores assemble result.nc .result.part-1.nc .result.part-2.nc
 ```
 
@@ -82,7 +82,7 @@ ecmwf-datastores assemble result.nc .result.part-1.nc .result.part-2.nc
 
 Сохраните фрагмент из **Show API request code** и выполните:
 
-```console
+```sh
 ecmwf-datastores import-python cds-request.py --output request.toml
 ```
 

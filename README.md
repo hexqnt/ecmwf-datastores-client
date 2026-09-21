@@ -1,12 +1,14 @@
 # ecmwf-datastores-client
 
+[![CI](https://github.com/hexqnt/ecmwf-datastores-client/actions/workflows/ci.yml/badge.svg)](https://github.com/hexqnt/ecmwf-datastores-client/actions/workflows/ci.yml) [![crates.io](https://img.shields.io/crates/v/ecmwf-datastores-client.svg)](https://crates.io/crates/ecmwf-datastores-client) [![docs.rs](https://docs.rs/ecmwf-datastores-client/badge.svg)](https://docs.rs/ecmwf-datastores-client)
+
 [🇺🇸 English](./README.md) · [🇷🇺 Русский](./README.ru.md)
 
 An unofficial asynchronous Rust client for the ECMWF Data Stores API (CDS, ADS, and EWDS). It supports catalogue queries, retrieval jobs, user profiles, and optional planning of large ERA5 requests.
 
 ## Installation
 
-```console
+```sh
 cargo add ecmwf-datastores-client
 ```
 

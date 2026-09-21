@@ -42,7 +42,7 @@ Credentials follow the library discovery order. Use `--credentials PATH` to sele
 
 ## Commands
 
-```console
+```sh
 ecmwf-datastores plan request.toml
 ecmwf-datastores constraints request.toml
 ecmwf-datastores retrieve request.toml --report report.json
@@ -68,7 +68,7 @@ max_concurrent_downloads = 1
 
 Multipart GRIB results are concatenated in plan order. NetCDF variables are merged by named one-dimensional coordinates; conflicting overlaps fail. Assembly requires space for all parts and the final file. Parts are retained after a failure and can be assembled manually:
 
-```console
+```sh
 ecmwf-datastores assemble result.nc .result.part-1.nc .result.part-2.nc
 ```
 
@@ -82,7 +82,7 @@ Multipart requests cannot assemble explicit archives; use `download_format = "un
 
 Save the snippet from **Show API request code**, then run:
 
-```console
+```sh
 ecmwf-datastores import-python cds-request.py --output request.toml
 ```
 
