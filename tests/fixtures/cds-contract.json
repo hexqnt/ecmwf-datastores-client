@@ -1,0 +1,83 @@
+{
+  "collection": {
+    "id": "reanalysis-era5-single-levels",
+    "title": "ERA5 hourly data on single levels from 1940 to present",
+    "extent": {
+      "spatial": { "bbox": [[0.0, -89.0, 360.0, 89.0]] },
+      "temporal": {
+        "interval": [["1940-01-01T00:00:00+00:00", "2026-09-11T00:00:00+00:00"]]
+      }
+    },
+    "updated": "2026-09-17T00:00:00Z",
+    "published": "2018-06-14T00:00:00Z",
+    "keywords": ["Product type: Reanalysis"],
+    "links": [
+      {
+        "rel": "self",
+        "type": "application/json",
+        "href": "https://cds.climate.copernicus.eu/api/catalogue/v1/collections/reanalysis-era5-single-levels"
+      }
+    ]
+  },
+  "job": {
+    "processID": "reanalysis-era5-single-levels",
+    "type": "process",
+    "jobID": "00000000-0000-0000-0000-000000000001",
+    "status": "successful",
+    "created": "2026-09-17T11:12:06.649467Z",
+    "updated": "2026-09-17T11:12:08.000000Z",
+    "links": [],
+    "metadata": {
+      "request": {
+        "ids": {
+          "product_type": ["reanalysis"],
+          "variable": ["2m_temperature"],
+          "year": ["2023"],
+          "month": ["01"],
+          "day": ["01"],
+          "time": ["00:00"],
+          "data_format": "grib",
+          "download_format": "unarchived"
+        },
+        "labels": {}
+      },
+      "datasetMetadata": {},
+      "origin": "api"
+    }
+  },
+  "results": {
+    "asset": {
+      "value": {
+        "type": "application/x-grib",
+        "href": "https://download.example.test/fixture.grib",
+        "file:checksum": "sha256:0000000000000000",
+        "file:size": 1024,
+        "file:local_path": "sanitized/fixture.grib"
+      }
+    }
+  },
+  "receipt": {
+    "request-id": "00000000-0000-0000-0000-000000000001",
+    "collection-id": "reanalysis-era5-single-levels",
+    "request": {
+      "variable": ["2m_temperature"],
+      "year": ["2023"],
+      "month": ["01"],
+      "day": ["01"],
+      "time": ["00:00"]
+    },
+    "status": "successful",
+    "created-at": "2026-09-17T11:12:06.649467Z",
+    "started-at": null,
+    "finished-at": null,
+    "updated-at": "2026-09-17T11:12:08.000000Z",
+    "origin": "api",
+    "licence": ["CC-BY licence (version 1)"],
+    "filename": "fixture.grib",
+    "download-size": 1024
+  },
+  "error": {
+    "title": "Resource fixture-does-not-exist not found",
+    "trace_id": "00000000-0000-0000-0000-000000000000"
+  }
+}

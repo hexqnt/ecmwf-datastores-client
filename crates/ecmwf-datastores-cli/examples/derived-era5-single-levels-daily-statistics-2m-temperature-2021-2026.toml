@@ -1,0 +1,17 @@
+dataset = "derived-era5-single-levels-daily-statistics"
+output = "downloads/era5-daily-mean-2m-temperature-2021-2026.nc"
+
+[bbox]
+lat = [44.0, 53.0]
+lon = [21.0, 41.0]
+
+[time]
+start = "2021-01-01"
+end = "2026-09-30"
+
+[request]
+product_type = "reanalysis"
+variable = ["2m_temperature"]
+daily_statistic = "daily_mean"
+time_zone = "utc+03:00"
+frequency = "1_hourly"

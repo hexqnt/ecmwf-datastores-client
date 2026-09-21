@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+readonly ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+readonly PROFILE_SECONDS="${PROFILE_SECONDS:-10}"
+readonly PROFILE_DIR="${CARGO_TARGET_DIR:-"$ROOT/target"}/profiling"
+
+usage() {
+    cat <<'EOF'
+Usage:
+  perf/run list
+  perf/run bench [all|planner|download|assembly] [CRITERION_ARGS...]
+  perf/run flamegraph TARGET SCENARIO
+  perf/run stat TARGET SCENARIO
+  perf/run record TARGET SCENARIO
+
+Environment:
+  PROFILE_SECONDS        Profiling duration in seconds (default: 10)
+  PERF_STAT_EVENTS       perf stat event list
+  PERF_RECORD_FREQUENCY  perf record sampling frequency (default: 999)
+EOF
+}
+
+die() {
+    echo "error: $*" >&2
+    exit 2
+}
+
+require_command() {
+    command -v "$1" >/dev/null 2>&1 || die "required command '$1' was not found"
+}
+
+select_target() {
+    case "$1" in
+        planner)
+            package=ecmwf-datastores-client
+            bench=planner
+            group=planner/local
+            scenarios=(
+                hourly_one_day
+                daily_six_years
+                hourly_many_axes
+                calendar_maximum_fragmentation
+                mars_ten_years
+            )
+            ;;
+        download)
+            package=ecmwf-datastores-client
+            bench=download
+            group=download/loopback_to_file
+            scenarios=(
+                1_mib_64_kib_chunks
+                32_mib_64_kib_chunks
+                32_mib_1_mib_chunks
+            )
+            ;;
+        assembly)
+            package=ecmwf-datastores-cli
+            bench=assembly
+            group=assembly
+            scenarios=(grib_8x4_mib netcdf_6x8_timesteps)
+            ;;
+        *) die "unknown benchmark target '$1' (expected planner, download, or assembly)" ;;
+    esac
+}
+
+select_scenario() {
+    local requested="$1"
+    local candidate
+    for candidate in "${scenarios[@]}"; do
+        if [[ "$candidate" == "$requested" ]]; then
+            scenario="$requested"
+            benchmark_id="$group/$scenario"
+            return
+        fi
+    done
+    die "unknown scenario '$requested' for target '$bench'; run 'perf/run list'"
+}
+
+check_duration() {
+    [[ "$PROFILE_SECONDS" =~ ^[1-9][0-9]*$ ]] \
+        || die "PROFILE_SECONDS must be a positive integer"
+}
+
+build_profile_target() {
+    cargo build \
+        --manifest-path "$ROOT/Cargo.toml" \
+        --profile profiling \
+        --package "$package" \
+        --all-features \
+        --bench "$bench"
+}
+
+benchmark_executable() {
+    local executable
+    executable="$({
+        find "$PROFILE_DIR/deps" -maxdepth 1 -type f -perm -100 \
+            -name "$bench-*" -printf '%T@ %p\n'
+    } | sort -nr | head -n 1 | cut -d ' ' -f 2-)"
+    [[ -n "$executable" ]] || die "Cargo did not produce the '$bench' benchmark executable"
+    printf '%s\n' "$executable"
+}
+
+list_targets() {
+    local target
+    for target in planner download assembly; do
+        select_target "$target"
+        echo "$target"
+        printf '  %s\n' "${scenarios[@]}"
+    done
+}
+
+run_bench() {
+    local target="${1:-all}"
+    shift || true
+    if [[ "$target" == all ]]; then
+        cargo bench --manifest-path "$ROOT/Cargo.toml" --workspace --all-features -- "$@"
+        return
+    fi
+    select_target "$target"
+    cargo bench \
+        --manifest-path "$ROOT/Cargo.toml" \
+        --package "$package" \
+        --all-features \
+        --bench "$bench" \
+        -- "$@"
+}
+
+run_flamegraph() {
+    require_command cargo-flamegraph
+    mkdir -p "$PROFILE_DIR"
+    local output="$PROFILE_DIR/$bench-$scenario.svg"
+    cargo flamegraph \
+        --manifest-path "$ROOT/Cargo.toml" \
+        --profile profiling \
+        --package "$package" \
+        --all-features \
+        --bench "$bench" \
+        --output "$output" \
+        -- --bench "$benchmark_id" --exact --profile-time "$PROFILE_SECONDS"
+    echo "Flamegraph written to $output"
+}
+
+run_perf() {
+    local mode="$1"
+    require_command perf
+    build_profile_target
+    local executable
+    executable="$(benchmark_executable)"
+
+    if [[ "$mode" == stat ]]; then
+        local events="${PERF_STAT_EVENTS:-cycles,instructions,cache-misses,branch-misses}"
+        perf stat -r 5 -e "$events" -- \
+            "$executable" --bench "$benchmark_id" --exact --profile-time "$PROFILE_SECONDS"
+        return
+    fi
+
+    mkdir -p "$PROFILE_DIR"
+    local output="$PROFILE_DIR/$bench-$scenario.data"
+    perf record \
+        -F "${PERF_RECORD_FREQUENCY:-999}" \
+        -g \
+        -o "$output" \
+        -- "$executable" --bench "$benchmark_id" --exact --profile-time "$PROFILE_SECONDS"
+    echo "perf data written to $output"
+    echo "Open it with: perf report -i '$output'"
+}
+
+main() {
+    cd "$ROOT"
+    local command="${1:-}"
+    case "$command" in
+        list)
+            [[ $# -eq 1 ]] || die "'list' takes no arguments"
+            list_targets
+            ;;
+        bench)
+            shift
+            run_bench "$@"
+            ;;
+        flamegraph|stat|record)
+            [[ $# -eq 3 ]] || { usage >&2; exit 2; }
+            check_duration
+            select_target "$2"
+            select_scenario "$3"
+            if [[ "$command" == flamegraph ]]; then
+                run_flamegraph
+            else
+                run_perf "$command"
+            fi
+            ;;
+        -h|--help|help)
+            usage
+            ;;
+        *)
+            usage >&2
+            exit 2
+            ;;
+    esac
+}
+
+main "$@"
