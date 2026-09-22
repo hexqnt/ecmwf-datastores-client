@@ -112,7 +112,7 @@ impl<T: Send + Sync> Paged<T> {
         P: PagePayload<T> + Send,
     {
         let mut page = self;
-        let mut items = Vec::new();
+        let mut items = std::mem::take(&mut page.items);
         let mut visited = HashSet::new();
         loop {
             visited.insert(page.url.clone());

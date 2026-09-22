@@ -235,6 +235,34 @@ fn calendar_estimates_count_only_real_dates() {
     assert_eq!(plan.estimated_items(), Some(3));
 }
 
+#[test]
+fn calendar_estimates_preserve_duplicates_and_all_month_lengths() {
+    let years = [1900, 2000, 2023, 2024];
+    let months = [0, 1, 2, 2, 4, 12, 13];
+    let days = [0, 1, 1, 28, 29, 29, 30, 31, 32];
+    let expected = years
+        .iter()
+        .flat_map(|&year| {
+            months.iter().flat_map(move |&month| {
+                days.into_iter()
+                    .filter(move |&day| NaiveDate::from_ymd_opt(year, month, day).is_some())
+            })
+        })
+        .count();
+    let request = PlanningRequest::new(
+        collection("reanalysis-era5-single-levels"),
+        selection(json!({
+            "year": years,
+            "month": months,
+            "day": days,
+            "time": ["00:00"],
+            "variable": ["2m_temperature"]
+        })),
+    );
+    let plan = Planner::new().plan_locally(&request).unwrap();
+    assert_eq!(plan.estimated_items(), Some(expected));
+}
+
 async fn respond(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
     stream
         .write_all(

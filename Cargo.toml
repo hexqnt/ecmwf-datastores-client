@@ -1,6 +1,6 @@
 [package]
 name = "ecmwf-datastores-client"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 license = "Apache-2.0 OR MIT"
 description = "Async Rust client for ECMWF Data Stores APIs with resumable jobs and streaming assets"

@@ -249,15 +249,16 @@ fn format_mars_range(start: NaiveDate, end: NaiveDate) -> String {
 fn balanced_ranges(
     item_count: usize,
     suggested_parts: usize,
-) -> impl Iterator<Item = std::ops::Range<usize>> {
+) -> impl ExactSizeIterator<Item = std::ops::Range<usize>> {
     let part_count = suggested_parts.clamp(2, item_count);
-    (0..part_count).scan((0, item_count), move |(start, remaining), index| {
-        let remaining_parts = part_count - index;
-        let part_len = remaining.div_ceil(remaining_parts);
-        let range = *start..*start + part_len;
-        *start += part_len;
-        *remaining -= part_len;
-        Some(range)
+    let mut start = 0;
+    let mut remaining = item_count;
+    (0..part_count).map(move |index| {
+        let part_len = remaining.div_ceil(part_count - index);
+        let range = start..start + part_len;
+        start += part_len;
+        remaining -= part_len;
+        range
     })
 }
 
@@ -510,41 +511,62 @@ fn validate_request(spec: &PlanningRequest) -> Result<()> {
     Ok(())
 }
 
+enum CostSplit {
+    Indivisible(RequestMap),
+    Parts(Vec<RequestMap>),
+}
+
 fn split_cost_map(
     profile: DatasetProfile,
-    request: Map<String, Value>,
+    mut request: RequestMap,
     suggested_parts: usize,
-) -> Result<Option<Vec<RequestMap>>> {
-    for key in profile.cost_split_axes() {
-        let Some(value) = request.get(*key) else {
-            continue;
-        };
-        let parts = match value {
-            Value::Array(values) if values.len() > 1 => Some(
-                balanced_ranges(values.len(), suggested_parts)
-                    .map(|range| Value::Array(values[range].to_vec()))
-                    .collect(),
-            ),
-            Value::String(expression) if *key == "date" => {
-                split_mars_date(expression, suggested_parts)?
+) -> Result<CostSplit> {
+    for &key in profile.cost_split_axes() {
+        match request.get(key) {
+            Some(Value::Array(values)) if values.len() > 1 => {
+                let ranges = balanced_ranges(values.len(), suggested_parts);
+                let Some(Value::Array(values)) = request.remove(key) else {
+                    unreachable!("selected axis is an array")
+                };
+                let mut values = values.into_iter();
+                let parts =
+                    ranges.map(|range| Value::Array(values.by_ref().take(range.len()).collect()));
+                return Ok(CostSplit::Parts(expand_axis(request, key, parts)));
             }
-            _ => None,
-        };
-        if let Some(mut parts) = parts {
-            let last = parts.pop().expect("a split always has at least two parts");
-            let mut requests = Vec::with_capacity(parts.len() + 1);
-            requests.extend(parts.into_iter().map(|value| {
-                let mut part = request.clone();
-                part.insert((*key).into(), value);
-                part
-            }));
-            let mut last_request = request;
-            last_request.insert((*key).into(), last);
-            requests.push(last_request);
-            return Ok(Some(requests));
+            Some(Value::String(expression)) if key == "date" => {
+                if let Some(parts) = split_mars_date(expression, suggested_parts)? {
+                    request.remove(key);
+                    return Ok(CostSplit::Parts(expand_axis(
+                        request,
+                        key,
+                        parts.into_iter(),
+                    )));
+                }
+            }
+            _ => {}
         }
     }
-    Ok(None)
+    Ok(CostSplit::Indivisible(request))
+}
+
+fn expand_axis(
+    mut base: RequestMap,
+    key: &str,
+    parts: impl ExactSizeIterator<Item = Value>,
+) -> Vec<RequestMap> {
+    let count = parts.len();
+    parts
+        .enumerate()
+        .map(|(index, value)| {
+            let mut request = if index + 1 == count {
+                std::mem::take(&mut base)
+            } else {
+                base.clone()
+            };
+            request.insert(key.into(), value);
+            request
+        })
+        .collect()
 }
 
 fn split_mars_date(expression: &str, suggested_parts: usize) -> Result<Option<Vec<Value>>> {
@@ -1080,6 +1102,22 @@ fn calendar_temporal_cardinality(
     {
         return Ok(None);
     }
+    // Preserve duplicate days while counting each month length only once.
+    let mut day_counts = [0_usize; 4];
+    for &day in days {
+        match day {
+            1..=28 => day_counts[0] += 1,
+            29 => day_counts[1] += 1,
+            30 => day_counts[2] += 1,
+            31 => day_counts[3] += 1,
+            _ => {}
+        }
+    }
+    let mut cumulative = 0;
+    let day_counts = day_counts.map(|count| {
+        cumulative += count;
+        cumulative
+    });
     let mut count = 0_usize;
     for &year in years {
         let year = i32::try_from(year).expect("calendar year was validated");
@@ -1088,10 +1126,7 @@ fn calendar_temporal_cardinality(
             let Some(last_day) = calendar_days_in_month(year, month) else {
                 continue;
             };
-            let valid_days = days
-                .iter()
-                .filter(|&&day| (1..=i64::from(last_day)).contains(&day))
-                .count();
+            let valid_days = day_counts[(last_day - 28) as usize];
             count = count
                 .checked_add(valid_days)
                 .or_invalid("calendar item count overflows usize")?;
@@ -1148,7 +1183,7 @@ async fn split_by_provider_cost(
                     PlanningError::CostingUnavailable(error)
                 }
             })?;
-        let map = selection.into_map();
+        let mut map = selection.into_map();
         let target = cost.preferred_limit();
         let needs_split = !cost.is_valid() || cost.cost() > target;
         if needs_split {
@@ -1157,18 +1192,21 @@ async fn split_by_provider_cost(
                 .get()
                 .saturating_sub(accepted.len() + pending.len());
             let suggested_parts = suggested_part_count(&cost).min(available_parts.max(2));
-            if let Some(parts) = split_cost_map(profile, map.clone(), suggested_parts)? {
-                if parts.len() > available_parts {
-                    return Err(PlanningError::InvalidRequest(format!(
-                        "provider-aware plan exceeds the configured limit of {} requests",
-                        planner.max_requests
-                    )));
+            match split_cost_map(profile, map, suggested_parts)? {
+                CostSplit::Parts(parts) => {
+                    if parts.len() > available_parts {
+                        return Err(PlanningError::InvalidRequest(format!(
+                            "provider-aware plan exceeds the configured limit of {} requests",
+                            planner.max_requests
+                        )));
+                    }
+                    for part in parts.into_iter().rev() {
+                        pending.push_front(part);
+                    }
+                    plan_changed = true;
+                    continue;
                 }
-                for part in parts.into_iter().rev() {
-                    pending.push_front(part);
-                }
-                plan_changed = true;
-                continue;
+                CostSplit::Indivisible(request) => map = request,
             }
         }
         if !cost.is_valid() {
@@ -1187,4 +1225,85 @@ async fn split_by_provider_cost(
         accepted.push((map, Some(cost)));
     }
     Ok(accepted)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn provider_splits_preserve_values_order_and_other_fields() {
+        for (profile, axis) in [
+            (DatasetProfile::Era5Hourly, "year"),
+            (DatasetProfile::Era5Complete, "param"),
+        ] {
+            let original = json!({axis: [1, 2, 3, 4, 5], "custom": {"nested": [true, "x"]}});
+            for suggested_parts in [2, 3, 10] {
+                let CostSplit::Parts(parts) = split_cost_map(
+                    profile,
+                    original.as_object().unwrap().clone(),
+                    suggested_parts,
+                )
+                .unwrap() else {
+                    panic!("request should be split");
+                };
+                assert_eq!(parts.len(), suggested_parts.min(5));
+                let values: Vec<_> = parts
+                    .iter()
+                    .flat_map(|part| part[axis].as_array().unwrap())
+                    .collect();
+                assert_eq!(
+                    values,
+                    original[axis]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .collect::<Vec<_>>()
+                );
+                for part in parts {
+                    assert_eq!(part["custom"], original["custom"]);
+                    assert_eq!(part.len(), 2);
+                    assert_ne!(part[axis].as_array().unwrap().as_slice(), &[] as &[Value]);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn indivisible_provider_request_is_preserved() {
+        let original = json!({"year": [2024], "custom": [1, 2, 3]});
+        let CostSplit::Indivisible(request) = split_cost_map(
+            DatasetProfile::Era5Hourly,
+            original.as_object().unwrap().clone(),
+            2,
+        )
+        .unwrap() else {
+            panic!("request should be indivisible");
+        };
+        assert_eq!(&request, original.as_object().unwrap());
+    }
+
+    #[test]
+    fn provider_date_splits_preserve_leap_day_and_other_fields() {
+        let CostSplit::Parts(parts) = split_cost_map(
+            DatasetProfile::Era5Complete,
+            json!({"date": "20240228/to/20240302", "param": "129/130"})
+                .as_object()
+                .unwrap()
+                .clone(),
+            3,
+        )
+        .unwrap() else {
+            panic!("date range should be split");
+        };
+        assert_eq!(
+            parts,
+            [
+                json!({"date": "2024-02-28/to/2024-02-29", "param": "129/130"}),
+                json!({"date": "2024-03-01", "param": "129/130"}),
+                json!({"date": "2024-03-02", "param": "129/130"}),
+            ]
+            .map(|value| value.as_object().unwrap().clone())
+        );
+    }
 }
